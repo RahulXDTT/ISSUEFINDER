@@ -1,0 +1,12 @@
+# Secrets — NEVER commit this
+.env
+
+# Runtime state (personal data, no need to share)
+config.json
+notifier_state.json
+notifier.log
+
+# Python virtual environment
+.venv/
+__pycache__/
+*.pyc
