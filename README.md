@@ -1,4 +1,4 @@
-# GitHub Issue Notifier — OSS Edition
+# GitHub Issue Notifier 
 
 
 > Polls GitHub repos/orgs for labelled issues and emails you a notification.
