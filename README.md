@@ -1,44 +1,28 @@
 # GitHub Issue Notifier — OSS Edition
 
-> Retro terminal UI with animated Invertocat pixel-art logo.  
+
 > Polls GitHub repos/orgs for labelled issues and emails you a notification.
 
 ```
-╔══════════════════════════════════════════════════════════════════════════════╗
-║                                                                              ║
-║          000000111111                                                        ║
-║        22222000000022222                                                     ║
-║       2222222222222222222                                                    ║
-║       2220022222220022222   ← animated Invertocat                           ║
-║       2222222222222222222      (digits cycle, brightness pulses)             ║
-║       2222220000222222222                                                    ║
-║        22222222222222222                                                     ║
-║         22222222222222                                                       ║
-║        20022222222002                                                        ║
-║        20000222200002                                                        ║
-║         020000000020                                                         ║
-║          0222222220                                                          ║
-║           000000000                                                          ║
-║                                                                              ║
-║   ██  ███████  ███████  ██    ██  ███████  ███    ██  ██████  ██████        ║
-║   ██  ██       ██       ██    ██  ██       ██ ██  ██  ██      ██            ║
-║   ██  ███████  ███████  ██    ██  █████    ██  ██ ██  █████   █████         ║
-║   ██       ██       ██  ██    ██  ██       ██   ████  ██      ██            ║
-║   ██  ███████  ███████   ██████   ███████  ██    ███  ███████ ██████        ║
-║   ╚══════════════════════════════════════════════════════════════╝           ║
-║                                                                              ║
-║   ─── GitHub Issue Monitor ── v2.0 OSS ───                                   ║
-║                                                                              ║
-╚══════════════════════════════════════════════════════════════════════════════╝
+         ██▄▄▄▄▄▄▄▄▄▄██
+         ██████████████
+        ▄██████████████▄
+        ████████████████
+        ███ ████████ ███
+     ▀█████▄████████▄█████▀
+     ▀▄▄  ▀██████████▀    ▀
+       ▀█▄▄ ▄██████▄
+        ▀▀██████████
+           ▄█ ████ █▄
+          ▄█▀▄████▄▀█▄
+             ▀▀  ▀▀
+     I S S U E F I N D E R
 ```
 
 ---
 
 ## Features
 
-- **Retro terminal UI** — green-on-black, box-drawing characters, animated Invertocat logo
-- **Animated Invertocat pixel-art** — GitHub Octocat silhouette built from digit blocks with independent brightness pulsing and color (blue circle + white cat)
-- **Gradient pixel-art title** — "ISSUENOTIFIER" rendered in 8-bit block characters with cyan-to-blue gradient
 - **Interactive credential setup** — prompts for tokens on first run, stores in `.env`
 - **Polls GitHub repos & orgs** — configurable labels, filters, and intervals
 - **HTML email notifications** — clean card-style emails via Gmail SMTP
