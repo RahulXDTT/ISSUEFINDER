@@ -1232,7 +1232,7 @@ def _interactive_select(title, options, multi=True, allow_select_all=True,
                 else:
                     return sorted(selected)
 
-            live.update(render())
+            live.update(render(), refresh=True)
 
 
 # ─── Repo Activity Sparkline ──────────────────────────────────────────────────
@@ -1463,7 +1463,7 @@ def _repo_browser(g, org_name):
                 chosen_repos = [repos[i].full_name for i in sorted(selected)]
                 return chosen_repos, selected
 
-            live.update(render())
+            live.update(render(), refresh=True)
 
 
 ISSUE_STATES = ["open", "closed", "all"]
