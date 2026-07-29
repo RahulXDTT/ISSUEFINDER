@@ -19,6 +19,7 @@ import argparse
 import getpass
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 
 try:
     from dotenv import load_dotenv, set_key
@@ -35,6 +36,7 @@ try:
     from rich.align import Align
     from rich.prompt import Prompt
     from rich.markup import escape
+    from rich.console import Group
     from rich import box
     RICH = True
 except ImportError:
@@ -1108,6 +1110,7 @@ def _interactive_select(title, options, multi=True, allow_select_all=True,
     multi=True  -> checkboxes, Space toggles, returns list[int] of chosen indices.
     multi=False -> radio, Enter on the highlighted option returns its index.
 
+    Redraws in place using rich.live.Live (no stacking on each keypress).
     Falls back to _pick() (numbered input) if the terminal can't read raw keys.
     """
     n = len(options)
@@ -1134,111 +1137,94 @@ def _interactive_select(title, options, multi=True, allow_select_all=True,
     def page_count():
         return len(options[page * page_size:page * page_size + page_size])
 
-    def draw():
-        if RICH:
-            console.print(f"\n[bold {G}]{escape(title)}[/bold {G}]")
-        else:
-            print(f"\n{title}")
+    def render():
+        heads = Text()
+        heads.append(f"\n{title}\n", style=f"bold {G}")
         hint = ("[↑/↓] move  [Space] toggle  [A] all  "
                 "[N]ext page  [P]rev page  [Enter] confirm  [Q] cancel"
                 if multi else
                 "[↑/↓] move  [Enter] select  [N]ext page  [P]rev page  [Q] cancel")
-        if RICH:
-            console.print(f"  [{DM}]{hint}[/{DM}]\n")
-        else:
-            print(f"  {hint}\n")
+        heads.append(f"  {hint}\n", style=DM)
 
         start = page * page_size
         page_opts = options[start:start + page_size]
 
-        if RICH:
-            table = Table(show_header=False, border_style=DM, box=box.ROUNDED,
-                          pad=False, expand=True)
-            table.add_column("", width=2)
-            table.add_column("Sel", width=3)
-            table.add_column("Option", style="white", ratio=4)
-        else:
-            print()
+        table = Table(show_header=False, border_style=DM, box=box.ROUNDED,
+                      expand=True)
+        table.add_column("", width=2)
+        table.add_column("Sel", width=3)
+        table.add_column("Option", style="white", ratio=4)
 
         if multi and allow_select_all:
             mk = "☒" if len(selected) == n else "☐"
             cur = (cursor == SELECT_ALL)
             t = "▶" if cur else " "
-            if RICH:
-                st = G if cur else "white"
-                table.add_row(t, f"[{st}]{mk}[/{st}]",
-                              f"[bold {G}][SELECT ALL][/bold {G}]")
-            else:
-                print(f"  {t} {mk}  [SELECT ALL]")
+            st = G if cur else "white"
+            table.add_row(t, f"[{st}]{mk}[/{st}]",
+                          f"[bold {G}][SELECT ALL][/bold {G}]")
 
         for i, opt in enumerate(page_opts):
             abs_idx = start + i
             mk = "☒" if (multi and abs_idx in selected) else "☐"
             cur = (cursor == i)
             t = "▶" if cur else " "
-            if RICH:
-                st = G if cur else "white"
-                table.add_row(t, f"[{st}]{mk}[/{st}]",
-                              f"[{st}]{escape(str(opt))}[/{st}]")
-            else:
-                print(f"  {t} {mk}  {opt}")
+            st = G if cur else "white"
+            table.add_row(t, f"[{st}]{mk}[/{st}]",
+                          f"[{st}]{escape(str(opt))}[/{st}]")
 
-        if RICH:
-            console.print(table)
-            console.print(f"  [{DM}]Page {page + 1}/{total_pages}  —  "
-                          f"{len(selected)}/{n} selected[/{DM}]")
-        else:
-            print(f"  Page {page + 1}/{total_pages}  —  {len(selected)}/{n} selected")
+        foot = Text(f"\n  Page {page + 1}/{total_pages}  —  "
+                    f"{len(selected)}/{n} selected\n", style=DM)
+        return Group(heads, table, foot)
 
-    while True:
-        draw()
-        key = _read_key()
-        if key is None:
-            key = "enter"
+    with Live(render(), console=console, refresh_per_second=30,
+              transient=True, screen=False) as live:
+        while True:
+            key = _read_key()
+            if key is None:
+                key = "enter"
 
-        if key in ("q", "esc", "ctrl-c", "ctrl-d"):
-            if RICH:
+            if key in ("q", "esc", "ctrl-c", "ctrl-d"):
                 console.print(f"\n  [{YL}]Selection cancelled.[/{YL}]")
-            else:
-                print("\n  Selection cancelled.")
-            return [] if multi else -1
+                return [] if multi else -1
 
-        if key == "up":
-            lower = SELECT_ALL if (multi and allow_select_all) else 0
-            cursor -= 1
-            if cursor < lower:
-                page = (page - 1) % total_pages
-                cursor = page_count() - 1
-        elif key == "down":
-            if cursor >= page_count() - 1:
+            if key == "up":
+                lower = SELECT_ALL if (multi and allow_select_all) else 0
+                cursor -= 1
+                if cursor < lower:
+                    page = (page - 1) % total_pages
+                    cursor = page_count() - 1
+            elif key == "down":
+                if cursor >= page_count() - 1:
+                    page = (page + 1) % total_pages
+                    cursor = SELECT_ALL if (multi and allow_select_all) else 0
+                else:
+                    cursor += 1
+            elif key in ("n", "right"):
                 page = (page + 1) % total_pages
                 cursor = SELECT_ALL if (multi and allow_select_all) else 0
-            else:
-                cursor += 1
-        elif key in ("n", "right"):
-            page = (page + 1) % total_pages
-            cursor = SELECT_ALL if (multi and allow_select_all) else 0
-        elif key in ("p", "left"):
-            page = (page - 1) % total_pages
-            cursor = SELECT_ALL if (multi and allow_select_all) else 0
-        elif key == "space":
-            if not multi:
-                if 0 <= cursor < page_count():
-                    return page * page_size + cursor
-            else:
-                if cursor == SELECT_ALL:
-                    selected = set() if len(selected) == n else set(range(n))
+            elif key in ("p", "left"):
+                page = (page - 1) % total_pages
+                cursor = SELECT_ALL if (multi and allow_select_all) else 0
+            elif key == "space":
+                if not multi:
+                    if 0 <= cursor < page_count():
+                        return page * page_size + cursor
                 else:
-                    abs_idx = page * page_size + cursor
-                    selected.discard(abs_idx) if abs_idx in selected else selected.add(abs_idx)
-        elif key == "a" and multi:
-            selected = set() if len(selected) == n else set(range(n))
-        elif key == "enter":
-            if not multi:
-                if 0 <= cursor < page_count():
-                    return page * page_size + cursor
-            else:
-                return sorted(selected)
+                    if cursor == SELECT_ALL:
+                        selected = set() if len(selected) == n else set(range(n))
+                    else:
+                        abs_idx = page * page_size + cursor
+                        selected.discard(abs_idx) if abs_idx in selected else selected.add(abs_idx)
+            elif key == "a" and multi:
+                selected = set() if len(selected) == n else set(range(n))
+            elif key == "enter":
+                if not multi:
+                    if 0 <= cursor < page_count():
+                        return page * page_size + cursor
+                else:
+                    return sorted(selected)
+
+            live.update(render())
 
 
 # ─── Repo Activity Sparkline ──────────────────────────────────────────────────
@@ -1288,24 +1274,58 @@ def _fetch_org_repos_sorted(g, org_name, cap=100):
     return repos
 
 
-def _repo_browser(g, org_name):
-    """Interactive checkbox browser for an org's repos with sorting,
-    pagination, stars/open-issues columns and a per-row activity sparkline."""
-    if RICH:
-        console.print()
-        console.print(f"  [{CY}]Fetching repos for '{org_name}' …[/{CY}]")
-    else:
-        print(f"\n  Fetching repos for '{org_name}' …")
+def _compute_sparklines(repos):
+    """Compute a 12-week activity sparkline per repo in parallel.
+    Returns dict[int idx -> str spark]."""
+    out = {}
+    if not repos:
+        return out
+
+    def work(i):
+        return i, _repo_sparkline(repos[i])
 
     try:
-        repos = _fetch_org_repos_sorted(g, org_name)
-    except GithubException as exc:
-        print_error(f"Cannot fetch org '{org_name}': {exc}")
-        return [], []
+        with ThreadPoolExecutor(max_workers=min(10, len(repos))) as ex:
+            for i, spark in ex.map(work, range(len(repos))):
+                out[i] = spark
+    except Exception:
+        for i in range(len(repos)):
+            out[i] = "".join(_SPARK[0] for _ in range(12))
+    return out
 
-    if not repos:
-        print_status("No public repos found.")
-        return [], []
+
+def _repo_browser(g, org_name):
+    """Interactive checkbox browser for an org's repos with sorting,
+    pagination, stars/open-issues columns and a per-row activity sparkline.
+
+    Shows a loading spinner while fetching + sorting + computing activity
+    trends, then redraws a single in-place list (no stacking) via Live."""
+    label = f"Fetching and sorting repos for '{org_name}' …"
+
+    if RICH:
+        with console.status(f"[{CY}]{label}[/{CY}]", spinner="dots"):
+            try:
+                repos = _fetch_org_repos_sorted(g, org_name)
+            except GithubException as exc:
+                print_error(f"Cannot fetch org '{org_name}': {exc}")
+                return [], []
+        if not repos:
+            print_status("No public repos found.")
+            return [], []
+        with console.status(f"[{CY}]Computing activity trends …[/{CY}]",
+                             spinner="dots"):
+            sparks = _compute_sparklines(repos)
+    else:
+        print(f"\n  {label}")
+        try:
+            repos = _fetch_org_repos_sorted(g, org_name)
+        except GithubException as exc:
+            print_error(f"Cannot fetch org '{org_name}': {exc}")
+            return [], []
+        if not repos:
+            print_status("No public repos found.")
+            return [], []
+        sparks = _compute_sparklines(repos)
 
     # Non-interactive fallback (no TTY / no rich): numbered multi-select.
     use_fancy = bool(RICH)
@@ -1329,49 +1349,35 @@ def _repo_browser(g, org_name):
     n = len(repos)
     total_pages = max(1, (n + REPO_PAGE_SIZE - 1) // REPO_PAGE_SIZE)
     page = 0
-    cursor = 0
+    cursor = -1
     selected = set()
 
-    def trend_for(idx):
-        if idx in _REPO_TREND_CACHE:
-            return _REPO_TREND_CACHE[idx]
-        spark = _repo_sparkline(repos[idx])
-        _REPO_TREND_CACHE[idx] = spark
-        return spark
+    def render():
+        heads = Text()
+        heads.append(f"\nBrowse repos in '{escape(org_name)}' — {n} repos\n",
+                     style=f"bold {G}")
+        heads.append("  [↑/↓] move  [Space] toggle  [A] select-all  "
+                     "[N]ext page  [P]rev page  [Enter] confirm  [Q] cancel\n",
+                     style=DM)
 
-    def draw():
-        if RICH:
-            console.print(f"\n[bold {G}]Browse repos in '{escape(org_name)}' — "
-                          f"{n} repos[/bold {G}]")
-        else:
-            print(f"\nBrowse repos in '{org_name}' — {n} repos")
-        if RICH:
-            console.print(f"  [{DM}][↑/↓] move  [Space] toggle  [A] select-all  "
-                          f"[N]ext page  [P]rev page  [Enter] confirm  [Q] cancel[/{DM}]\n")
-            table = Table(show_header=True, header_style=f"bold {G}",
-                          border_style=DM, box=box.ROUNDED, pad=False, expand=True)
-            table.add_column("", width=2)
-            table.add_column("Sel", width=3)
-            table.add_column("Repo", style="white", ratio=3)
-            table.add_column("★ Stars", style=YL, justify="right", width=8)
-            table.add_column("⚠ Open", style=RD, justify="right", width=7)
-            table.add_column("Activity (12w)", style=G, width=14)
-        else:
-            print("  ↑/↓ move, Space toggle, A all, N next, P prev, Enter confirm, Q cancel\n")
+        table = Table(show_header=True, header_style=f"bold {G}",
+                      border_style=DM, box=box.ROUNDED, expand=True)
+        table.add_column("", width=2)
+        table.add_column("Sel", width=3)
+        table.add_column("Repo", style="white", ratio=3)
+        table.add_column("★ Stars", style=YL, justify="right", width=8)
+        table.add_column("⚠ Open", style=RD, justify="right", width=7)
+        table.add_column("Activity (12w)", style=G, width=14)
 
         start = page * REPO_PAGE_SIZE
         page_repos = repos[start:start + REPO_PAGE_SIZE]
 
-        # Select-all row
         all_on = len(selected) == n
         mark = "☒" if all_on else "☐"
         cur = (cursor == -1)
         tag = "▶" if cur else " "
-        if RICH:
-            table.add_row(tag, f"[{G}]{mark}[/{G}]", f"[bold {G}]SELECT ALL[/bold {G}]",
-                          "", "", "")
-        else:
-            print(f"  {tag} {mark} SELECT ALL")
+        table.add_row(tag, f"[{G}]{mark}[/{G}]",
+                      f"[bold {G}]SELECT ALL[/bold {G}]", "", "", "")
 
         for i, r in enumerate(page_repos):
             abs_idx = start + i
@@ -1379,76 +1385,71 @@ def _repo_browser(g, org_name):
             mk = "☒" if checked else "☐"
             pos = (cursor == i)
             t = "▶" if pos else " "
-            spark = trend_for(abs_idx) if (pos or checked) else trend_for(abs_idx)
-            if RICH:
-                style = G if pos else "white"
-                table.add_row(
-                    t, f"[{style}]{mk}[/{style}]",
-                    f"[{style}]{escape(r.full_name)}[/{style}]",
-                    f"{r.stargazers_count:,}", f"{r.open_issues_count:,}",
-                    f"[{G}]{spark}[/{G}]",
-                )
-            else:
-                print(f"  {t} {mk} {r.full_name:<40} ★{r.stargazers_count} "
-                      f"⚠{r.open_issues_count} {spark}")
+            spk = sparks.get(abs_idx, "".join(_SPARK[0] for _ in range(12)))
+            style = G if pos else "white"
+            table.add_row(
+                t, f"[{style}]{mk}[/{style}]",
+                f"[{style}]{escape(r.full_name)}[/{style}]",
+                f"{r.stargazers_count:,}", f"{r.open_issues_count:,}",
+                f"[{G}]{spk}[/{G}]",
+            )
 
-        if RICH:
-            console.print(table)
-            console.print(f"  [{DM}]Page {page + 1}/{total_pages}  —  "
-                          f"{len(selected)}/{n} selected[/{DM}]")
-        else:
-            print(f"  Page {page + 1}/{total_pages}  —  {len(selected)}/{n} selected")
+        foot = Text(f"\n  Page {page + 1}/{total_pages}  —  "
+                    f"{len(selected)}/{n} selected\n", style=DM)
+        return Group(heads, table, foot)
 
-    while True:
-        draw()
-        key = _read_key()
-        if key is None:
-            key = "enter"
-        if key in ("q", "esc", "ctrl-c", "ctrl-d"):
-            if RICH:
+    with Live(render(), console=console, refresh_per_second=30,
+              transient=True, screen=False) as live:
+        while True:
+            key = _read_key()
+            if key is None:
+                key = "enter"
+
+            if key in ("q", "esc", "ctrl-c", "ctrl-d"):
                 console.print(f"\n  [{YL}]Browser cancelled.[/{YL}]")
-            else:
-                print("\n  Browser cancelled.")
-            return [], []
-        if key == "up":
-            cursor -= 1
-            if cursor < -1:
-                page = (page - 1) % total_pages
+                return [], []
+
+            if key == "up":
+                cursor -= 1
+                if cursor < -1:
+                    page = (page - 1) % total_pages
+                    pc = len(repos[page * REPO_PAGE_SIZE:page * REPO_PAGE_SIZE + REPO_PAGE_SIZE])
+                    cursor = pc - 1
+            elif key == "down":
                 pc = len(repos[page * REPO_PAGE_SIZE:page * REPO_PAGE_SIZE + REPO_PAGE_SIZE])
-                cursor = pc - 1
-        elif key == "down":
-            pc = len(repos[page * REPO_PAGE_SIZE:page * REPO_PAGE_SIZE + REPO_PAGE_SIZE])
-            if cursor >= pc - 1:
+                if cursor >= pc - 1:
+                    page = (page + 1) % total_pages
+                    cursor = -1
+                else:
+                    cursor += 1
+            elif key in ("n", "right"):
                 page = (page + 1) % total_pages
                 cursor = -1
-            else:
-                cursor += 1
-        elif key in ("n", "right"):
-            page = (page + 1) % total_pages
-            cursor = -1
-        elif key in ("p", "left"):
-            page = (page - 1) % total_pages
-            cursor = -1
-        elif key == "space":
-            if cursor == -1:
+            elif key in ("p", "left"):
+                page = (page - 1) % total_pages
+                cursor = -1
+            elif key == "space":
+                if cursor == -1:
+                    if len(selected) == n:
+                        selected.clear()
+                    else:
+                        selected = set(range(n))
+                else:
+                    abs_idx = page * REPO_PAGE_SIZE + cursor
+                    if abs_idx in selected:
+                        selected.discard(abs_idx)
+                    else:
+                        selected.add(abs_idx)
+            elif key == "a":
                 if len(selected) == n:
                     selected.clear()
                 else:
                     selected = set(range(n))
-            else:
-                abs_idx = page * REPO_PAGE_SIZE + cursor
-                if abs_idx in selected:
-                    selected.discard(abs_idx)
-                else:
-                    selected.add(abs_idx)
-        elif key == "a":
-            if len(selected) == n:
-                selected.clear()
-            else:
-                selected = set(range(n))
-        elif key == "enter":
-            chosen_repos = [repos[i].full_name for i in sorted(selected)]
-            return chosen_repos, selected
+            elif key == "enter":
+                chosen_repos = [repos[i].full_name for i in sorted(selected)]
+                return chosen_repos, selected
+
+            live.update(render())
 
 
 ISSUE_STATES = ["open", "closed", "all"]
