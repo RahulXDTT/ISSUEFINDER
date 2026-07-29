@@ -67,6 +67,7 @@ MAX_RETRIES          = 4
 BACKOFF_BASE         = 60
 ORG_REPO_LIMIT       = 30
 INITIAL_LOOKBACK_HRS = 24
+MAX_NOTIFY_AGE_DAYS  = 7     # notify only issues opened within the last week
 
 DEFAULT_CONFIG: dict = {
     "poll_interval_minutes": 5,
@@ -528,13 +529,20 @@ def passes_filters(issue, filters: dict, first_scan: bool) -> bool:
         return False
     if filters.get("exclude_assigned", True) and issue.assignee is not None:
         return False
+
+    # Hard rule: only notify issues opened within the last MAX_NOTIFY_AGE_DAYS.
+    # (On the very first scan per repo we use a shorter INITIAL_LOOKBACK_HRS
+    # window so startup doesn't flood you with a week of backlog.)
+    created = issue.created_at
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
     if first_scan:
-        cutoff  = datetime.now(timezone.utc) - timedelta(hours=INITIAL_LOOKBACK_HRS)
-        created = issue.created_at
-        if created.tzinfo is None:
-            created = created.replace(tzinfo=timezone.utc)
-        if created < cutoff:
-            return False
+        cutoff = now - timedelta(hours=INITIAL_LOOKBACK_HRS)
+    else:
+        cutoff = now - timedelta(days=MAX_NOTIFY_AGE_DAYS)
+    if created < cutoff:
+        return False
     return True
 
 # ─── Email ────────────────────────────────────────────────────────────────────
