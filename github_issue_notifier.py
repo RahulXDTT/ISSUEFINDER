@@ -1137,15 +1137,15 @@ def _interactive_select(title, options, multi=True, allow_select_all=True,
     def page_count():
         return len(options[page * page_size:page * page_size + page_size])
 
-    def render():
-        heads = Text()
-        heads.append(f"\n{title}\n", style=f"bold {G}")
-        hint = ("[↑/↓] move  [Space] toggle  [A] all  "
-                "[N]ext page  [P]rev page  [Enter] confirm  [Q] cancel"
-                if multi else
-                "[↑/↓] move  [Enter] select  [N]ext page  [P]rev page  [Q] cancel")
-        heads.append(f"  {hint}\n", style=DM)
+    # Print the header once, outside Live, so it isn't re-rendered each tick.
+    hint = ("[↑/↓] move  [Space] toggle  [A] all  "
+            "[N]ext page  [P]rev page  [Enter] confirm  [Q] cancel"
+            if multi else
+            "[↑/↓] move  [Enter] select  [N]ext page  [P]rev page  [Q] cancel")
+    console.print(f"\n{escape(title)}", style=f"bold {G}")
+    console.print(f"  {hint}", style=DM)
 
+    def render():
         start = page * page_size
         page_opts = options[start:start + page_size]
 
@@ -1176,11 +1176,11 @@ def _interactive_select(title, options, multi=True, allow_select_all=True,
         for _ in range(page_size - len(page_opts)):
             table.add_row("", "", "")
 
-        foot = Text(f"\n  Page {page + 1}/{total_pages}  —  "
-                    f"{len(selected)}/{n} selected\n", style=DM)
-        return Group(heads, table, foot)
+        foot = Text(f"  Page {page + 1}/{total_pages}  —  "
+                    f"{len(selected)}/{n} selected", style=DM)
+        return Group(table, foot)
 
-    with Live(render(), console=console, refresh_per_second=8,    
+    with Live(render(), console=console, refresh_per_second=8,
               transient=True, screen=False) as live:
         while True:
             key = _read_key()
@@ -1356,14 +1356,14 @@ def _repo_browser(g, org_name):
     cursor = -1
     selected = set()
 
-    def render():
-        heads = Text()
-        heads.append(f"\nBrowse repos in '{escape(org_name)}' — {n} repos\n",
-                     style=f"bold {G}")
-        heads.append("  [↑/↓] move  [Space] toggle  [A] select-all  "
-                     "[N]ext page  [P]rev page  [Enter] confirm  [Q] cancel\n",
-                     style=DM)
+    # Print the header once, outside Live, so it isn't re-rendered each tick.
+    console.print(f"\nBrowse repos in '{escape(org_name)}' — {n} repos",
+                  style=f"bold {G}")
+    console.print("  [↑/↓] move  [Space] toggle  [A] select-all  "
+                  "[N]ext page  [P]rev page  [Enter] confirm  [Q] cancel",
+                  style=DM)
 
+    def render():
         table = Table(show_header=True, header_style=f"bold {G}",
                       border_style=DM, box=box.ROUNDED, expand=True)
         table.add_column("", width=2)
@@ -1402,11 +1402,11 @@ def _repo_browser(g, org_name):
         for _ in range(REPO_PAGE_SIZE - len(page_repos)):
             table.add_row("", "", "", "", "", "")
 
-        foot = Text(f"\n  Page {page + 1}/{total_pages}  —  "
-                    f"{len(selected)}/{n} selected\n", style=DM)
-        return Group(heads, table, foot)
+        foot = Text(f"  Page {page + 1}/{total_pages}  —  "
+                    f"{len(selected)}/{n} selected", style=DM)
+        return Group(table, foot)
 
-    with Live(render(), console=console, refresh_per_second=8,    
+    with Live(render(), console=console, refresh_per_second=8,
               transient=True, screen=False) as live:
         while True:
             key = _read_key()
