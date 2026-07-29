@@ -1172,11 +1172,15 @@ def _interactive_select(title, options, multi=True, allow_select_all=True,
             table.add_row(t, f"[{st}]{mk}[/{st}]",
                           f"[{st}]{escape(str(opt))}[/{st}]")
 
+        # Pad to keep frame height constant across pages
+        for _ in range(page_size - len(page_opts)):
+            table.add_row("", "", "")
+
         foot = Text(f"\n  Page {page + 1}/{total_pages}  —  "
                     f"{len(selected)}/{n} selected\n", style=DM)
         return Group(heads, table, foot)
 
-    with Live(render(), console=console, refresh_per_second=30,
+    with Live(render(), console=console, refresh_per_second=8,    
               transient=True, screen=False) as live:
         while True:
             key = _read_key()
@@ -1394,11 +1398,15 @@ def _repo_browser(g, org_name):
                 f"[{G}]{spk}[/{G}]",
             )
 
+        # Pad with blank filler rows to keep frame height constant across pages
+        for _ in range(REPO_PAGE_SIZE - len(page_repos)):
+            table.add_row("", "", "", "", "", "")
+
         foot = Text(f"\n  Page {page + 1}/{total_pages}  —  "
                     f"{len(selected)}/{n} selected\n", style=DM)
         return Group(heads, table, foot)
 
-    with Live(render(), console=console, refresh_per_second=30,
+    with Live(render(), console=console, refresh_per_second=8,    
               transient=True, screen=False) as live:
         while True:
             key = _read_key()
