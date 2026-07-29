@@ -92,6 +92,10 @@ def _setup_logging() -> logging.Logger:
             logging.FileHandler(LOG_FILE, encoding="utf-8"),
         ],
     )
+    # Silence noisy third-party libraries (cssselect/tinycss/premailer et al.)
+    # that log INFO-level parse warnings while yagmail renders HTML emails.
+    for noisy in ("cssselect", "tinycss2", "premailer", "yagmail", "urllib3"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
     return logging.getLogger(__name__)
 
 logger = _setup_logging()
@@ -527,7 +531,7 @@ def build_mailer() -> tuple:
 def passes_filters(issue, filters: dict, first_scan: bool) -> bool:
     if filters.get("exclude_prs", True) and issue.pull_request is not None:
         return False
-    if filters.get("exclude_assigned", True) and issue.assignee is not None:
+    if filters.get("exclude_assigned", True) and getattr(issue, "assignees", None):
         return False
 
     # Hard rule: only notify issues opened within the last MAX_NOTIFY_AGE_DAYS.
