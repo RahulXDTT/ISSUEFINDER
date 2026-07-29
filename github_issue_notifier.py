@@ -1160,18 +1160,27 @@ def _interactive_select(title, options, multi=True, allow_select_all=True,
             mk = "☒" if len(selected) == n else "☐"
             cur = (cursor == SELECT_ALL)
             t = "▶" if cur else " "
-            st = G if cur else "white"
-            table.add_row(t, f"[{st}]{mk}[/{st}]",
-                          f"[bold {G}][SELECT ALL][/bold {G}]")
+            fg = "black" if cur else "white"
+            label_style = f"bold {G}" if cur else f"bold {G}"
+            if cur:
+                label_style = "bold black"
+            table.add_row(
+                t, f"[{fg}]{mk}[/{fg}]",
+                f"[{label_style}][SELECT ALL][/{label_style}]",
+                style="on bright_green" if cur else "",
+            )
 
         for i, opt in enumerate(page_opts):
             abs_idx = start + i
             mk = "☒" if (multi and abs_idx in selected) else "☐"
             cur = (cursor == i)
             t = "▶" if cur else " "
-            st = G if cur else "white"
-            table.add_row(t, f"[{st}]{mk}[/{st}]",
-                          f"[{st}]{escape(str(opt))}[/{st}]")
+            fg = "black" if cur else "white"
+            table.add_row(
+                t, f"[{fg}]{mk}[/{fg}]",
+                f"[{fg}]{escape(str(opt))}[/{fg}]",
+                style="on bright_green" if cur else "",
+            )
 
         # Pad to keep frame height constant across pages
         for _ in range(page_size - len(page_opts)):
@@ -1384,8 +1393,10 @@ def _repo_browser(g, org_name):
         mark = "☒" if all_on else "☐"
         cur = (cursor == -1)
         tag = "▶" if cur else " "
+        row_style = "on bright_green" if cur else ""
         table.add_row(tag, f"[{G}]{mark}[/{G}]",
-                      f"[bold {G}]SELECT ALL[/bold {G}]", "", "", "")
+                      f"[bold {G}]SELECT ALL[/bold {G}]", "", "", "",
+                      style=row_style)
 
         for i, r in enumerate(page_repos):
             abs_idx = start + i
@@ -1394,12 +1405,15 @@ def _repo_browser(g, org_name):
             pos = (cursor == i)
             t = "▶" if pos else " "
             spk = sparks.get(abs_idx, "".join(_SPARK[0] for _ in range(12)))
-            style = G if pos else "white"
+            row_style = "on bright_green" if pos else ""
+            fg = "black" if pos else "white"
             table.add_row(
-                t, f"[{style}]{mk}[/{style}]",
-                f"[{style}]{escape(r.full_name)}[/{style}]",
-                f"{r.stargazers_count:,}", f"{r.open_issues_count:,}",
-                f"[{G}]{spk}[/{G}]",
+                t, f"[{fg}]{mk}[/{fg}]",
+                f"[{fg}]{escape(r.full_name)}[/{fg}]",
+                f"[{fg}]{r.stargazers_count:,}[/{fg}]",
+                f"[{fg}]{r.open_issues_count:,}[/{fg}]",
+                f"[{fg}]{spk}[/{fg}]",
+                style=row_style,
             )
 
         # Pad with blank filler rows to keep frame height constant across pages
