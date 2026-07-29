@@ -1137,15 +1137,16 @@ def _interactive_select(title, options, multi=True, allow_select_all=True,
     def page_count():
         return len(options[page * page_size:page * page_size + page_size])
 
-    # Print the header once, outside Live, so it isn't re-rendered each tick.
     hint = ("[↑/↓] move  [Space] toggle  [A] all  "
             "[N]ext page  [P]rev page  [Enter] confirm  [Q] cancel"
             if multi else
             "[↑/↓] move  [Enter] select  [N]ext page  [P]rev page  [Q] cancel")
-    console.print(f"\n{escape(title)}", style=f"bold {G}")
-    console.print(f"  {hint}", style=DM)
 
     def render():
+        heads = Text()
+        heads.append(f"\n{escape(title)}\n", style=f"bold {G}")
+        heads.append(f"  {hint}\n", style=DM)
+
         start = page * page_size
         page_opts = options[start:start + page_size]
 
@@ -1178,9 +1179,12 @@ def _interactive_select(title, options, multi=True, allow_select_all=True,
 
         foot = Text(f"  Page {page + 1}/{total_pages}  —  "
                     f"{len(selected)}/{n} selected", style=DM)
-        return Group(table, foot)
+        return Group(heads, table, foot)
 
-    with Live(render(), console=console, refresh_per_second=8,
+    # auto_refresh=False → the background thread won't keep re-emitting the
+    # frame; we redraw explicitly only after a key changes state. This avoids
+    # the header/list stacking during the brief load window.
+    with Live(render(), console=console, auto_refresh=False,
               transient=True, screen=False) as live:
         while True:
             key = _read_key()
@@ -1356,14 +1360,14 @@ def _repo_browser(g, org_name):
     cursor = -1
     selected = set()
 
-    # Print the header once, outside Live, so it isn't re-rendered each tick.
-    console.print(f"\nBrowse repos in '{escape(org_name)}' — {n} repos",
-                  style=f"bold {G}")
-    console.print("  [↑/↓] move  [Space] toggle  [A] select-all  "
-                  "[N]ext page  [P]rev page  [Enter] confirm  [Q] cancel",
-                  style=DM)
-
     def render():
+        heads = Text()
+        heads.append(f"\nBrowse repos in '{escape(org_name)}' — {n} repos\n",
+                     style=f"bold {G}")
+        heads.append("  [↑/↓] move  [Space] toggle  [A] select-all  "
+                     "[N]ext page  [P]rev page  [Enter] confirm  [Q] cancel\n",
+                     style=DM)
+
         table = Table(show_header=True, header_style=f"bold {G}",
                       border_style=DM, box=box.ROUNDED, expand=True)
         table.add_column("", width=2)
@@ -1404,9 +1408,11 @@ def _repo_browser(g, org_name):
 
         foot = Text(f"  Page {page + 1}/{total_pages}  —  "
                     f"{len(selected)}/{n} selected", style=DM)
-        return Group(table, foot)
+        return Group(heads, table, foot)
 
-    with Live(render(), console=console, refresh_per_second=8,
+    # auto_refresh=False → nothing is re-emitted until a key is pressed; the
+    # whole frame (header + table + footer) appears at once once computed.
+    with Live(render(), console=console, auto_refresh=False,
               transient=True, screen=False) as live:
         while True:
             key = _read_key()
