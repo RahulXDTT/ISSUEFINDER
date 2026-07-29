@@ -375,7 +375,7 @@ def print_menu():
     cmds = [
         ("run",            "Start polling (Ctrl+C to stop)"),
         ("cli",            "Interactive CLI mode — type commands directly"),
-        ("setup",          "Interactive configuration wizard"),
+        ("setup",          "Interactive wizard (checkboxes • trending • sorted)"),
         ("list",           "Show current configuration"),
         ("add-repo",       "Watch a specific repository"),
         ("remove-repo",    "Stop watching a repository"),
@@ -1035,6 +1035,422 @@ def _yn(prompt: str, default: bool = True) -> bool:
         return default
     return raw.startswith("y")
 
+# ─── Interactive Checkbox / Radio Widget ─────────────────────────────────────
+_SPARK = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"]
+
+def _read_key():
+    """Read a single keypress without waiting for Enter. Returns a short name.
+
+    Falls back to None if stdin isn't a TTY (caller should fall back to input()).
+    """
+    try:
+        if not sys.stdin.isatty():
+            return None
+    except Exception:
+        return None
+
+    try:
+        import termios
+        import tty
+        fd = sys.stdin.fileno()
+        old = termios.tcgetattr(fd)
+        try:
+            tty.setraw(fd)
+            ch = sys.stdin.read(1)
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)
+    except Exception:
+        try:
+            import msvcrt
+            ch = msvcrt.getwch()
+        except Exception:
+            return None
+
+    if ch == "\x1b":
+        # escape sequence — read the rest
+        seq = ""
+        try:
+            import termios
+            import tty
+            fd = sys.stdin.fileno()
+            old = termios.tcgetattr(fd)
+            try:
+                tty.setraw(fd)
+                while len(seq) < 2:
+                    nxt = sys.stdin.read(1)
+                    if not nxt:
+                        break
+                    seq += nxt
+            finally:
+                termios.tcsetattr(fd, termios.TCSADRAIN, old)
+        except Exception:
+            seq = ""
+        full = ch + seq
+        return {
+            "\x1b[A": "up", "\x1b[B": "down",
+            "\x1b[C": "right", "\x1b[D": "left",
+            "\r": "enter", "\n": "enter",
+        }.get(full, "esc")
+    return {
+        "\r": "enter", "\n": "enter",
+        " ": "space", "\t": "tab",
+        "\x7f": "backspace", "\x08": "backspace",
+        "\x03": "ctrl-c", "\x04": "ctrl-d",
+        "q": "q", "Q": "q", "a": "a", "A": "a",
+        "n": "n", "N": "n", "p": "p", "P": "p",
+    }.get(ch, ch)
+
+
+def _interactive_select(title, options, multi=True, allow_select_all=True,
+                        page_size=10):
+    """Arrow-key driven checkbox / radio picker.
+
+    multi=True  -> checkboxes, Space toggles, returns list[int] of chosen indices.
+    multi=False -> radio, Enter on the highlighted option returns its index.
+
+    Falls back to _pick() (numbered input) if the terminal can't read raw keys.
+    """
+    n = len(options)
+    if n == 0:
+        return [] if multi else -1
+
+    use_fancy = bool(RICH)
+    try:
+        use_fancy = use_fancy and sys.stdin.isatty()
+    except Exception:
+        use_fancy = False
+    if not use_fancy:
+        if multi:
+            return _pick(title, options, multi=True)
+        idx = _pick(title, options, multi=False)
+        return idx[0] if idx else -1
+
+    SELECT_ALL = -1
+    total_pages = max(1, (n + page_size - 1) // page_size)
+    page = 0
+    cursor = SELECT_ALL if (multi and allow_select_all) else 0
+    selected = set()
+
+    def page_count():
+        return len(options[page * page_size:page * page_size + page_size])
+
+    def draw():
+        if RICH:
+            console.print(f"\n[bold {G}]{escape(title)}[/bold {G}]")
+        else:
+            print(f"\n{title}")
+        hint = ("[↑/↓] move  [Space] toggle  [A] all  "
+                "[N]ext page  [P]rev page  [Enter] confirm  [Q] cancel"
+                if multi else
+                "[↑/↓] move  [Enter] select  [N]ext page  [P]rev page  [Q] cancel")
+        if RICH:
+            console.print(f"  [{DM}]{hint}[/{DM}]\n")
+        else:
+            print(f"  {hint}\n")
+
+        start = page * page_size
+        page_opts = options[start:start + page_size]
+
+        if RICH:
+            table = Table(show_header=False, border_style=DM, box=box.ROUNDED,
+                          pad=False, expand=True)
+            table.add_column("", width=2)
+            table.add_column("Sel", width=3)
+            table.add_column("Option", style="white", ratio=4)
+        else:
+            print()
+
+        if multi and allow_select_all:
+            mk = "☒" if len(selected) == n else "☐"
+            cur = (cursor == SELECT_ALL)
+            t = "▶" if cur else " "
+            if RICH:
+                st = G if cur else "white"
+                table.add_row(t, f"[{st}]{mk}[/{st}]",
+                              f"[bold {G}][SELECT ALL][/bold {G}]")
+            else:
+                print(f"  {t} {mk}  [SELECT ALL]")
+
+        for i, opt in enumerate(page_opts):
+            abs_idx = start + i
+            mk = "☒" if (multi and abs_idx in selected) else "☐"
+            cur = (cursor == i)
+            t = "▶" if cur else " "
+            if RICH:
+                st = G if cur else "white"
+                table.add_row(t, f"[{st}]{mk}[/{st}]",
+                              f"[{st}]{escape(str(opt))}[/{st}]")
+            else:
+                print(f"  {t} {mk}  {opt}")
+
+        if RICH:
+            console.print(table)
+            console.print(f"  [{DM}]Page {page + 1}/{total_pages}  —  "
+                          f"{len(selected)}/{n} selected[/{DM}]")
+        else:
+            print(f"  Page {page + 1}/{total_pages}  —  {len(selected)}/{n} selected")
+
+    while True:
+        draw()
+        key = _read_key()
+        if key is None:
+            key = "enter"
+
+        if key in ("q", "esc", "ctrl-c", "ctrl-d"):
+            if RICH:
+                console.print(f"\n  [{YL}]Selection cancelled.[/{YL}]")
+            else:
+                print("\n  Selection cancelled.")
+            return [] if multi else -1
+
+        if key == "up":
+            lower = SELECT_ALL if (multi and allow_select_all) else 0
+            cursor -= 1
+            if cursor < lower:
+                page = (page - 1) % total_pages
+                cursor = page_count() - 1
+        elif key == "down":
+            if cursor >= page_count() - 1:
+                page = (page + 1) % total_pages
+                cursor = SELECT_ALL if (multi and allow_select_all) else 0
+            else:
+                cursor += 1
+        elif key in ("n", "right"):
+            page = (page + 1) % total_pages
+            cursor = SELECT_ALL if (multi and allow_select_all) else 0
+        elif key in ("p", "left"):
+            page = (page - 1) % total_pages
+            cursor = SELECT_ALL if (multi and allow_select_all) else 0
+        elif key == "space":
+            if not multi:
+                if 0 <= cursor < page_count():
+                    return page * page_size + cursor
+            else:
+                if cursor == SELECT_ALL:
+                    selected = set() if len(selected) == n else set(range(n))
+                else:
+                    abs_idx = page * page_size + cursor
+                    selected.discard(abs_idx) if abs_idx in selected else selected.add(abs_idx)
+        elif key == "a" and multi:
+            selected = set() if len(selected) == n else set(range(n))
+        elif key == "enter":
+            if not multi:
+                if 0 <= cursor < page_count():
+                    return page * page_size + cursor
+            else:
+                return sorted(selected)
+
+
+# ─── Repo Activity Sparkline ──────────────────────────────────────────────────
+def _repo_sparkline(repo, bins=12) -> str:
+    """Build a small activity sparkline from recent issues/PRs (last `bins` weeks)."""
+    try:
+        counts = [0] * bins
+        now = datetime.now(timezone.utc)
+        # get_issues covers issues AND PRs in PyGithub for repos; fetch last ~100
+        items = repo.get_issues(state="all", sort="created", direction="desc")
+        seen = 0
+        for it in items:
+            seen += 1
+            if seen > 100:
+                break
+            c = it.created_at
+            if c.tzinfo is None:
+                c = c.replace(tzinfo=timezone.utc)
+            weeks_ago = int((now - c).days // 7)
+            if 0 <= weeks_ago < bins:
+                counts[bins - 1 - weeks_ago] += 1
+        mx = max(counts) if counts else 0
+        if mx == 0:
+            return "".join(_SPARK[0] for _ in range(bins))
+        return "".join(_SPARK[min(len(_SPARK) - 1, int(c / mx * (len(_SPARK) - 1)))]
+                        for c in counts)
+    except Exception:
+        return "".join(_SPARK[0] for _ in range(bins))
+
+
+# ─── Repo Browser (sorted + paginated + trend + checkboxes) ───────────────────
+REPO_PAGE_SIZE = 8
+_REPO_TREND_CACHE = {}
+
+def _fetch_org_repos_sorted(g, org_name, cap=100):
+    """Fetch up to `cap` public non-archived repos for an org, sorted by
+    stars desc then open-issues desc."""
+    org = g.get_organization(org_name)
+    repos = []
+    for r in org.get_repos(type="public", sort="pushed", direction="desc"):
+        if r.archived or r.disabled:
+            continue
+        repos.append(r)
+        if len(repos) >= cap:
+            break
+    repos.sort(key=lambda r: (r.stargazers_count, r.open_issues_count), reverse=True)
+    return repos
+
+
+def _repo_browser(g, org_name):
+    """Interactive checkbox browser for an org's repos with sorting,
+    pagination, stars/open-issues columns and a per-row activity sparkline."""
+    if RICH:
+        console.print()
+        console.print(f"  [{CY}]Fetching repos for '{org_name}' …[/{CY}]")
+    else:
+        print(f"\n  Fetching repos for '{org_name}' …")
+
+    try:
+        repos = _fetch_org_repos_sorted(g, org_name)
+    except GithubException as exc:
+        print_error(f"Cannot fetch org '{org_name}': {exc}")
+        return [], []
+
+    if not repos:
+        print_status("No public repos found.")
+        return [], []
+
+    # Non-interactive fallback (no TTY / no rich): numbered multi-select.
+    use_fancy = bool(RICH)
+    try:
+        use_fancy = use_fancy and sys.stdin.isatty()
+    except Exception:
+        use_fancy = False
+    if not use_fancy:
+        names = [r.full_name for r in repos]
+        opts = [f"[ENTIRE ORG]  {org_name}"] + names
+        idxs = _pick(f"Select repos to watch from '{org_name}':", opts, multi=True)
+        chosen = []
+        chosen_set = set()
+        for i in idxs:
+            if i == 0:
+                continue
+            chosen.append(names[i - 1])
+            chosen_set.add(i - 1)
+        return chosen, chosen_set
+
+    n = len(repos)
+    total_pages = max(1, (n + REPO_PAGE_SIZE - 1) // REPO_PAGE_SIZE)
+    page = 0
+    cursor = 0
+    selected = set()
+
+    def trend_for(idx):
+        if idx in _REPO_TREND_CACHE:
+            return _REPO_TREND_CACHE[idx]
+        spark = _repo_sparkline(repos[idx])
+        _REPO_TREND_CACHE[idx] = spark
+        return spark
+
+    def draw():
+        if RICH:
+            console.print(f"\n[bold {G}]Browse repos in '{escape(org_name)}' — "
+                          f"{n} repos[/bold {G}]")
+        else:
+            print(f"\nBrowse repos in '{org_name}' — {n} repos")
+        if RICH:
+            console.print(f"  [{DM}][↑/↓] move  [Space] toggle  [A] select-all  "
+                          f"[N]ext page  [P]rev page  [Enter] confirm  [Q] cancel[/{DM}]\n")
+            table = Table(show_header=True, header_style=f"bold {G}",
+                          border_style=DM, box=box.ROUNDED, pad=False, expand=True)
+            table.add_column("", width=2)
+            table.add_column("Sel", width=3)
+            table.add_column("Repo", style="white", ratio=3)
+            table.add_column("★ Stars", style=YL, justify="right", width=8)
+            table.add_column("⚠ Open", style=RD, justify="right", width=7)
+            table.add_column("Activity (12w)", style=G, width=14)
+        else:
+            print("  ↑/↓ move, Space toggle, A all, N next, P prev, Enter confirm, Q cancel\n")
+
+        start = page * REPO_PAGE_SIZE
+        page_repos = repos[start:start + REPO_PAGE_SIZE]
+
+        # Select-all row
+        all_on = len(selected) == n
+        mark = "☒" if all_on else "☐"
+        cur = (cursor == -1)
+        tag = "▶" if cur else " "
+        if RICH:
+            table.add_row(tag, f"[{G}]{mark}[/{G}]", f"[bold {G}]SELECT ALL[/bold {G}]",
+                          "", "", "")
+        else:
+            print(f"  {tag} {mark} SELECT ALL")
+
+        for i, r in enumerate(page_repos):
+            abs_idx = start + i
+            checked = abs_idx in selected
+            mk = "☒" if checked else "☐"
+            pos = (cursor == i)
+            t = "▶" if pos else " "
+            spark = trend_for(abs_idx) if (pos or checked) else trend_for(abs_idx)
+            if RICH:
+                style = G if pos else "white"
+                table.add_row(
+                    t, f"[{style}]{mk}[/{style}]",
+                    f"[{style}]{escape(r.full_name)}[/{style}]",
+                    f"{r.stargazers_count:,}", f"{r.open_issues_count:,}",
+                    f"[{G}]{spark}[/{G}]",
+                )
+            else:
+                print(f"  {t} {mk} {r.full_name:<40} ★{r.stargazers_count} "
+                      f"⚠{r.open_issues_count} {spark}")
+
+        if RICH:
+            console.print(table)
+            console.print(f"  [{DM}]Page {page + 1}/{total_pages}  —  "
+                          f"{len(selected)}/{n} selected[/{DM}]")
+        else:
+            print(f"  Page {page + 1}/{total_pages}  —  {len(selected)}/{n} selected")
+
+    while True:
+        draw()
+        key = _read_key()
+        if key is None:
+            key = "enter"
+        if key in ("q", "esc", "ctrl-c", "ctrl-d"):
+            if RICH:
+                console.print(f"\n  [{YL}]Browser cancelled.[/{YL}]")
+            else:
+                print("\n  Browser cancelled.")
+            return [], []
+        if key == "up":
+            cursor -= 1
+            if cursor < -1:
+                page = (page - 1) % total_pages
+                pc = len(repos[page * REPO_PAGE_SIZE:page * REPO_PAGE_SIZE + REPO_PAGE_SIZE])
+                cursor = pc - 1
+        elif key == "down":
+            pc = len(repos[page * REPO_PAGE_SIZE:page * REPO_PAGE_SIZE + REPO_PAGE_SIZE])
+            if cursor >= pc - 1:
+                page = (page + 1) % total_pages
+                cursor = -1
+            else:
+                cursor += 1
+        elif key in ("n", "right"):
+            page = (page + 1) % total_pages
+            cursor = -1
+        elif key in ("p", "left"):
+            page = (page - 1) % total_pages
+            cursor = -1
+        elif key == "space":
+            if cursor == -1:
+                if len(selected) == n:
+                    selected.clear()
+                else:
+                    selected = set(range(n))
+            else:
+                abs_idx = page * REPO_PAGE_SIZE + cursor
+                if abs_idx in selected:
+                    selected.discard(abs_idx)
+                else:
+                    selected.add(abs_idx)
+        elif key == "a":
+            if len(selected) == n:
+                selected.clear()
+            else:
+                selected = set(range(n))
+        elif key == "enter":
+            chosen_repos = [repos[i].full_name for i in sorted(selected)]
+            return chosen_repos, selected
+
+
 ISSUE_STATES = ["open", "closed", "all"]
 
 def _remove_menu(section: str, items: list, config: dict, key: str) -> None:
@@ -1075,45 +1491,29 @@ def cmd_setup(_args) -> None:
     _remove_menu("watched orgs", config.get("watched_orgs", []), config, "watched_orgs")
 
     while True:
-        org_name = input("\n  Add an org to watch (or press Enter to skip): ").strip()
+        org_name = input("\n  Add an org to browse (or press Enter to skip): ").strip()
         if not org_name:
             break
         config.setdefault("watched_orgs", [])
         if org_name in config["watched_orgs"]:
-            print(f"  '{org_name}' is already being watched.")
-            continue
-        print(f"  Fetching public repos for '{org_name}' …")
-        try:
-            org_obj = g.get_organization(org_name)
-            repos   = []
-            for r in org_obj.get_repos(type="public", sort="pushed", direction="desc"):
-                if not r.archived and not r.disabled:
-                    repos.append(r.full_name)
-                if len(repos) >= 50:
-                    break
-        except GithubException as exc:
-            print(f"  Error fetching org: {exc}")
+            print(f"  '{org_name}' is already being watched (entire org).")
             continue
 
-        if not repos:
-            print("  No public repos found.")
-            continue
-
-        idxs = _pick(
-            f"Select what to add from '{org_name}':",
-            [f"[ENTIRE ORG]  {org_name}"] + repos,
-            multi=True,
-        )
+        chosen_repos, chosen_idx_set = _repo_browser(g, org_name)
         config.setdefault("watched_repos", [])
-        for i in idxs:
-            if i == 0:
-                config["watched_orgs"].append(org_name)
-                print(f"  Added entire org '{org_name}'.")
-            else:
-                repo = repos[i - 1]
-                if repo not in config["watched_repos"]:
-                    config["watched_repos"].append(repo)
-                    print(f"  Added repo '{repo}'.")
+        added_any = False
+        for repo in chosen_repos:
+            if repo not in config["watched_repos"]:
+                config["watched_repos"].append(repo)
+                print(f"  Added repo '{repo}'.")
+                added_any = True
+        # If the user selected every visible repo, also register the whole org
+        # so it stays in sync on future polls.
+        if chosen_idx_set and len(chosen_idx_set) == 100 and org_name not in config["watched_orgs"]:
+            config["watched_orgs"].append(org_name)
+            print(f"  Added entire org '{org_name}' (all listed repos selected).")
+        elif added_any:
+            pass
 
     # Step 2: Individual repos
     print_section("STEP 2 — Individual repos")
@@ -1146,20 +1546,19 @@ def cmd_setup(_args) -> None:
     available = [l for l in COMMON_LABELS if l not in already]
 
     if available:
-        print("\n  Common labels (select numbers, comma-separated):")
-        for i, lbl in enumerate(available, 1):
-            print(f"    {i:>3}.  {lbl}")
-        raw = input("  Your choice (or press Enter to skip): ").strip()
-        if raw:
-            config.setdefault("trigger_labels", [])
-            try:
-                for idx in [int(x.strip()) - 1 for x in raw.split(",") if x.strip()]:
-                    if 0 <= idx < len(available):
-                        lbl = available[idx]
-                        config["trigger_labels"].append(lbl)
-                        print(f"  Added '{lbl}'.")
-            except ValueError:
-                print("  Invalid input — skipped.")
+        print("\n  Common trigger labels — toggle the ones you want to watch:")
+        idxs = _interactive_select(
+            "Select trigger labels",
+            available,
+            multi=True,
+            allow_select_all=True,
+            page_size=len(available) or 1,
+        )
+        config.setdefault("trigger_labels", [])
+        for i in idxs:
+            lbl = available[i]
+            config["trigger_labels"].append(lbl)
+            print(f"  Added '{lbl}'.")
 
     while True:
         label = input("\n  Type a custom label to add (or press Enter to finish): ").strip().lower()
@@ -1179,8 +1578,14 @@ def cmd_setup(_args) -> None:
     print(f"  Exclude PRs           : {config['filters']['exclude_prs']}")
 
     if _yn("\n  Change issue filters?", default=False):
-        [state_idx] = _pick("Issue state to fetch:", ISSUE_STATES)
-        config["filters"]["issue_state"] = ISSUE_STATES[state_idx]
+        state_idx = _interactive_select(
+            "Issue state to fetch",
+            ISSUE_STATES,
+            multi=False,
+            allow_select_all=False,
+        )
+        if 0 <= state_idx < len(ISSUE_STATES):
+            config["filters"]["issue_state"] = ISSUE_STATES[state_idx]
         config["filters"]["exclude_assigned"] = not _yn(
             "Include issues that already have an assignee?", default=False
         )
